@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+mega_env/
+
+# uv cache
+.uv/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Data / Jupyter
+.ipynb_checkpoints/
+
+# Flask / web
+instance/
+.webassets-cache/
+
+# Environment variables
+.env
+.env.*
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# JetBrains / WebStorm
+.idea/
+*.iml
+
+# OS junk
+.DS_Store
+Thumbs.db*.sh
+.DS_Store
+.venv/
+__pycache__/
+# pixi environments
+.pixi/*
+!.pixi/config.toml
