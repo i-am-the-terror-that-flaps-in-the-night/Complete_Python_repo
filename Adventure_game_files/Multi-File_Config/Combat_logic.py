@@ -1,82 +1,152 @@
+"""Fights, item use in fights, rewards and boss spawning."""
+
 import random
+import sys
+
+from entities import Enemy
+from game_data import ITEMS
+from items import obtain_item
+from ui import type_slow
 
 
-class Combat:
-    @staticmethod
-    def get_enemy_stats(is_boss):
-        enemy_health = random.randint(10, 90)
-        if is_boss:
-            enemy_health *= 7
+def deal_damage(player, enemy, damage):
+    player.damage_dealt += min(damage, enemy.hp)  # Overkill doesn't count toward bosses
+    enemy.hp -= damage
+    type_slow(f"{player.name} did {damage} damage to {enemy.name}", 0.05)
+    type_slow(f"{enemy.name}'s hp is {max(0, enemy.hp)}")  # Display 0 instead of negative
 
-        if enemy_health <= 30:
-            enemy_name = "Gremlin"
-        elif 30 < enemy_health <= 60:
-            enemy_name = "Goblin"
-        elif 60 < enemy_health <= 90:
-            enemy_name = "Orc"
-        else:
-            enemy_name = (
-                "Tharnoth the inevitable, Bootleg Thanos out of Bilbo Baggins' pantry"
-            )
 
-        return enemy_name, enemy_health
+def use_item(player, enemy):
+    """Let the player use an inventory item. Returns True if a turn was spent."""
+    for i, key in enumerate(player.inventory):
+        type_slow(f"[{i + 1}] {ITEMS[key]['name']}", 0.01)
 
-    @staticmethod
-    def calculate_player_attack(player):
-        return 5 + (player["inventory"].count("sword") * 10)
+    choice = input("Enter the number of the item you want to use: ").strip()
+    if not choice.isdigit() or not 1 <= int(choice) <= len(player.inventory):
+        type_slow("Invalid selection.", 0.05)
+        return False
 
-    @staticmethod
-    def calculate_enemy_damage(is_boss, player):
-        base_atk = random.randint(5, 15)
-        if is_boss:
-            base_atk = round(base_atk * 6.7)
-            if player.get("ukulele_active") and player.get("ukulele_charges") > 0:
-                base_atk = random.choice([base_atk, 0, 0, 0, 0, 0, 0, 0])
-                player["ukulele_charges"] -= 1
-            if player.get("ukulele_charges") <= 0:
-                player["ukulele_active"] = False
+    key = player.inventory[int(choice) - 1]
+    item_data = ITEMS[key]
+    use = item_data["use"]
+    if "vs" in use and not enemy.matches(use["vs"]):
+        type_slow(f"The {item_data['name']} has no effect on {enemy.name}.", 0.05)
+        return False
 
-        evasion = player["inventory"].count("shield") * 5
-        return max(0, base_atk - evasion), evasion
+    type_slow(f"{player.name} used the {item_data['name']}!", 0.05)
 
-    @staticmethod
-    def handle_victory(enemy_name, player):
-        loot = random.randint(5, 20)
-        player["gold"] += loot
-        print(f"You defeated the {enemy_name} and found {loot} gold!")
-        return True
+    if "heal" in use:
+        healed = min(use["heal"], player.max_hp - player.hp)
+        player.hp += healed
+        type_slow(
+            f"{player.name} restored {healed} HP. HP is now {player.hp}/{player.max_hp}",
+            0.05,
+        )
+    if "damage" in use:
+        deal_damage(player, enemy, use["damage"])
+    if "lull" in use:
+        enemy.lulled += use["lull"]
+        type_slow(f"{enemy.name} looks drowsy...", 0.05)
 
-    @staticmethod
-    def encounter_enemy(is_boss, player, current_kills):
-        # We check the boss status based on the kills passed from the main file
-        if current_kills > 5:
-            is_boss = True
+    if use.get("consume", True):
+        player.inventory.remove(key)
+    return True
 
-        enemy, enemy_health = Combat.get_enemy_stats(is_boss)
-        print(f"👾 {enemy} appears with {enemy_health} HP!")
 
-        while enemy_health > 0 and player["health"] > 0:
-            action = input("[Fight] or [Run]? ").lower().strip()
+def enemy_turn(player, enemy):
+    if enemy.lulled > 0:
+        enemy.lulled -= 1
+        if random.random() < 7 / 8:
+            type_slow(f"{enemy.name} is lost in the music and misses!\n", 0.05)
+            return
 
-            if action == "run":
-                print("You ran away!")
-                return current_kills  # Return the same number if they ran
+    damage = round(enemy.attack / player.stat("defense", enemy))
+    player.hp -= damage
+    type_slow(f"{enemy.name} did {damage} damage to {player.name}", 0.1)
+    type_slow(f"{player.name}'s hp is {max(0, player.hp)}\n")
 
-            if action == "fight":
-                atk = Combat.calculate_player_attack(player)
-                enemy_health -= atk
-                print(f"You hit for {atk} damage!")
 
-                if enemy_health > 0:
-                    dmg, blocked = Combat.calculate_enemy_damage(is_boss, player)
-                    player["health"] -= dmg
-                    print(f"The {enemy} hit you for {dmg}! (Blocked {blocked})")
-                    print(f"Your Health: {player['health']}")
+def handle_victory(player, enemy):
+    if enemy.death:
+        type_slow(f"\n{enemy.death}\n", 0.04)
+    player.attack += 2
+    player.hp = min(player.max_hp, player.hp + 10)
+    player.gold += enemy.gold
+    type_slow(
+        f"{enemy.name} is defeated! You gained 2 attack, restored 10 HP, and found {enemy.gold} gold.",
+        0.05,
+    )
+    for key in enemy.drops:
+        type_slow(f"{enemy.name} dropped a {ITEMS[key]['name']}!", 0.05)
+        obtain_item(player, key)
+
+    if "boss" in enemy.tags:
+        player.bosses_beaten += 1
+    if "final" in enemy.tags:
+        win_game(player)
+
+
+def win_game(player):
+    type_slow(f"\n*** {player.name} has defeated the final boss! YOU WIN! ***\n", 0.1)
+    if input("Keep playing? (y/n) ").lower().strip() != "y":
+        sys.exit()
+
+
+def spawn_enemy(player, enemy_names):
+    """Summon the next boss if it's ready, otherwise a random regular enemy."""
+    if player.boss_ready():
+        enemy = Enemy.boss(player.next_boss())
+        type_slow(f"\n{enemy.intro}\n", 0.04)
+        type_slow(f"{enemy.title} appears!", 0.05)
+    else:
+        enemy = Enemy.regular(random.choice(enemy_names), player.enemy_scale())
+        type_slow(f"A vicious {enemy.name} appears! ({enemy.hp} HP, {enemy.attack} attack)", 0.05)
+    return enemy
+
+
+def fight(player, enemy):
+    type_slow(f"\n--- Start of Fight: {player.name} vs {enemy.name} ---", 0.05)
+
+    while player.hp > 0 and enemy.hp > 0:
+        player_attack_choice = (
+            input("Do you want to attack[A], use an item[I], or run[R]?\n")
+            .lower()
+            .strip()
+        )
+
+        # Flag to skip enemy turn if player uses an invalid item
+        action_performed = False
+
+        if player_attack_choice == "a":
+            deal_damage(player, enemy, player.stat("attack", enemy))
+            action_performed = True
+
+        elif player_attack_choice == "i":
+            if not player.inventory:
+                type_slow("Your inventory is empty! You panic and waste a turn.", 0.05)
+                action_performed = True  # Enemy still gets a turn
             else:
-                print("Invalid action.")
+                action_performed = use_item(player, enemy)
 
-        if enemy_health <= 0:
-            Combat.handle_victory(enemy, player)
-            return current_kills + 1  # Return the NEW kill count
+        elif player_attack_choice == "r":
+            type_slow("You ran away!", 0.05)
+            if "boss" in enemy.tags:
+                type_slow(f"{enemy.name} will be waiting for you...", 0.05)
+            return
 
-        return current_kills  # If they died, just return current
+        else:
+            type_slow("Invalid choice. Enter 'A', 'I' or 'R'. Wasting a turn...", 0.05)
+            action_performed = True
+
+        # Check for Victory
+        if enemy.hp <= 0:
+            handle_victory(player, enemy)
+            return
+
+        if action_performed:
+            enemy_turn(player, enemy)
+
+        # Check for Defeat (Must happen after the enemy attacks)
+        if player.hp <= 0:
+            type_slow(f"{player.name}'s hp is 0! \n----- KO -----\n", 0.2)
+            sys.exit()

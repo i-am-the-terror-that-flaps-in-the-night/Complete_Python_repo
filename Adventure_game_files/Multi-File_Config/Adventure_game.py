@@ -1,139 +1,102 @@
 """
 This game is still in progress and will have bugs and non-functionality.
+Run this file to play.
 """
 
 import random
+import sys
 
-from Combat_logic import Combat
-
-# ---------- Game Data ----------
-
-
-player = {
-    "name": "",
-    "health": 100,
-    "inventory": ["sword"],
-    "gold": 0,
-    "ukulele_active": False,
-    "ukulele_charges": 0,
-}
-
-rooms_list = {
-    "village": {"type": "safe", "chance_of_enemy": 0.1, "chance_of_item": 0.7},
-    "forest": {"type": "wild", "chance_of_enemy": 0.5, "chance_of_item": 0.875},
-    "cave": {"type": "dangerous", "chance_of_enemy": 0.8, "chance_of_item": 0.4},
-    "castle": {"type": "fatal", "chance_of_enemy": 1, "chance_of_item": 0.1},
-}
-
-items = ["potion", "sword", "shield"]
-enemies_killed = 0
-
-
-# ---------- Functions ----------
-
-
-def intro():
-    print("Welcome to the Adventure Game!")
-    player["name"] = input("What is your hero's name? ")
-
-
-def show_status():
-    print(
-        f"\n--- {player['name']} | HP: {player['health']} | Gold: {player['gold']} ---"
-    )
-
-
-def use_item():
-    if not player["inventory"]:
-        print("Your inventory is empty.")
-        return
-
-    print("\nItems in inventory:")
-    for i, item in enumerate(player["inventory"], 1):
-        print(f"{i}. {item}")
-
-    item_usage = input("Use an item [yes/no]? ").strip().lower()
-    if item_usage == "yes":
-        item_chosen = input("Which item? ").strip().lower()
-        if item_chosen == "potion" and "potion" in player["inventory"]:
-            player["inventory"].remove("potion")
-            player["health"] = min(100, player["health"] + 20)  # Caps health at 100
-            print(f"Healed! Health is now {player['health']}.")
-        elif item_chosen == "ukulele" and "ukulele" in player["inventory"]:
-            player["inventory"].remove("ukulele")
-            print("The ukulele was used. Effect unknown")
-            player["ukulele_active"] = True
-            player["ukulele_charges"] += 2
-        elif item_chosen in player["inventory"]:
-            print(f"You can't use the {item_chosen} right now.")
-        else:
-            print("You don't have that item.")
+from Combat_logic import fight, spawn_enemy
+from entities import Player
+from game_data import ENEMY_TEMPLATES, FIND_POOL, ITEMS, ROOMS
+from items import obtain_item, shop
+from ui import type_slow
 
 
 def choose_room():
-    # .keys() gives you just "village", "forest", etc.
-    print(f"Areas: {', '.join(rooms_list.keys())}")
+    areas = ", ".join(f"{name} ({room['type']})" for name, room in ROOMS.items())
+    type_slow(f"Areas: {areas}", 0.02)
     while True:
         choice = input("Enter an area: ").strip().lower()
-        if choice in rooms_list:
+        if choice in ROOMS:
             return choice
-        print("That area doesn't exist.")
+        type_slow("That area doesn't exist.", 0.05)
 
 
-def find_item():
-    found = random.choice(items)
-    player["inventory"].append(found)
-    print(f"✨ You found a {found}!")
-    return found  # We return this so other functions can see it
+def find_item(player):
+    found = random.choices(list(FIND_POOL), weights=list(FIND_POOL.values()))[0]
+    if found == "gold":
+        amount = random.randint(10, 30)
+        player.gold += amount
+        type_slow(f"✨ You found {amount} gold!", 0.05)
+    else:
+        type_slow(f"✨ You found a {ITEMS[found]['name']}!", 0.05)
+        obtain_item(player, found)
 
 
-def shop():
-    print("\n--- Welcome to the Shop! ---")
-    while True:
-        items_in_shop = ["potion", "sword", "shield", "spear", "ukulele"]
-        print(f"Your Gold: {player['gold']}")
-        for i, item in enumerate(items_in_shop, 1):
-            print(f"{i}. {item} (15 Gold)")
+def explore(player):
+    room = ROOMS[choose_room()]
 
-        choice = input("\nBuy an item (type name) or 'exit' to leave: ").strip().lower()
+    # Decide if something happens in the room, based on the room's odds.
+    # A boss that's ready always finds you.
+    found_item = random.random() < room["chance_of_item"]
+    met_enemy = player.boss_ready() or random.random() < room["chance_of_enemy"]
 
-        if choice == "exit":
-            break
-        elif choice in items_in_shop:
-            if player["gold"] >= 15:
-                player["inventory"].append(choice)
-                player["gold"] -= 15
-                print(f"Purchased {choice}!")
-            else:
-                print("You're too broke for that.")
-        else:
-            print("We don't sell that here.")
+    if found_item:
+        find_item(player)
+    if met_enemy:
+        fight(player, spawn_enemy(player, room["enemies"]))
+    if not found_item and not met_enemy:
+        type_slow("The area is quiet. Nothing here.", 0.05)
+
+
+def show_status(player):
+    type_slow("-" * 30)
+    item_names = [ITEMS[key]["name"] for key in player.inventory]
+    type_slow(
+        f"Your health: {player.hp}/{player.max_hp} \nYour attack: {player.attack} \nYour defense: {player.defense} \nYour items: {item_names} \nYour gold: {player.gold} \nDamage dealt: {player.damage_dealt} \nEnemy strength: x{player.enemy_scale()}",
+        0.02,
+    )
+
+    boss = player.next_boss()
+    if player.boss_ready():
+        type_slow(f"⚠ {boss['name']} is hunting you! Your next fight will be against it.", 0.02)
+    elif boss:
+        type_slow(f"{boss['name']} appears at {boss['appears_at']} damage dealt.", 0.02)
 
 
 def main():
-    global enemies_killed  # Use global so we can update the counter
-    intro()
-    while player["health"] > 0:
-        show_status()
-        # Maybe don't force them into the shop EVERY turn?
-        # You could move shop() inside an 'if room == "village"' block later.
-        shop()
-        use_item()
-        room = choose_room()
+    player = Player(input("Enter your name: "))
+    while True:
+        show_status(player)
 
-        # Decide if something happens in the room, based on the room's odds
-        found_item = random.random() < rooms_list[room]["chance_of_item"]
-        met_enemy = random.random() < rooms_list[room]["chance_of_enemy"]
+        player_choice = (
+            input("\nYour options are: \n[F]ight \n[E]xplore \n[S]hop \n[R]est \n[Q]uit \n")
+            .lower()
+            .strip()
+        )
 
-        if found_item:
-            find_item()
-        if met_enemy:
-            # Update the kills by catching the return value
-            enemies_killed = Combat.encounter_enemy(False, player, enemies_killed)
-        if not found_item and not met_enemy:
-            print("The room is quiet. Nothing here.")
+        if player_choice == "f":
+            fight(player, spawn_enemy(player, list(ENEMY_TEMPLATES)))
 
-    print("\n💀 You have died. Game Over.")
+        elif player_choice == "e":
+            explore(player)
+
+        elif player_choice == "s":
+            shop(player)
+
+        elif player_choice == "r":
+            type_slow("Resting... \nResting...\nResting... \n\n", 0.35)
+            type_slow(
+                f"{player.name} has rested! \nYour HP is now at {player.max_hp}!", 0.05
+            )
+            player.hp = player.max_hp
+        elif player_choice == "q":
+            quit_choice = input("Do you wish to quit the game (y/n)?").lower().strip()
+            if quit_choice == "y":
+                sys.exit()
+        else:
+            type_slow("Invalid choice. Try again.", 0.05)
 
 
 if __name__ == "__main__":
