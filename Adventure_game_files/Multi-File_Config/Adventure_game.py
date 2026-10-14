@@ -57,7 +57,7 @@ def use_item():
         item_chosen = input("Which item? ").strip().lower()
         if item_chosen == "potion" and "potion" in player["inventory"]:
             player["inventory"].remove("potion")
-            player["health"] += 20  # Caps health at 100
+            player["health"] = min(100, player["health"] + 20)  # Caps health at 100
             print(f"Healed! Health is now {player['health']}.")
         elif item_chosen == "ukulele" and "ukulele" in player["inventory"]:
             player["inventory"].remove("ukulele")
@@ -73,8 +73,11 @@ def use_item():
 def choose_room():
     # .keys() gives you just "village", "forest", etc.
     print(f"Areas: {', '.join(rooms_list.keys())}")
-    choice = input("Enter an area: ").strip().lower()
-    return choice
+    while True:
+        choice = input("Enter an area: ").strip().lower()
+        if choice in rooms_list:
+            return choice
+        print("That area doesn't exist.")
 
 
 def find_item():
@@ -118,18 +121,16 @@ def main():
         use_item()
         room = choose_room()
 
-        # Decide if something happens in the room
-        event_choice = random.choice(["item", "enemy", "nothing", "item & enemy"])
+        # Decide if something happens in the room, based on the room's odds
+        found_item = random.random() < rooms_list[room]["chance_of_item"]
+        met_enemy = random.random() < rooms_list[room]["chance_of_enemy"]
 
-        if event_choice == "item":
+        if found_item:
             find_item()
-        elif event_choice == "enemy":
+        if met_enemy:
             # Update the kills by catching the return value
             enemies_killed = Combat.encounter_enemy(False, player, enemies_killed)
-        elif event_choice == "item & enemy":
-            find_item()
-            enemies_killed = Combat.encounter_enemy(False, player, enemies_killed)
-        else:
+        if not found_item and not met_enemy:
             print("The room is quiet. Nothing here.")
 
     print("\n💀 You have died. Game Over.")

@@ -45,7 +45,8 @@ yarn-error.log*
 
 # OS junk
 .DS_Store
-Thumbs.db*.sh
+Thumbs.db
+*.sh
 .DS_Store
 .venv/
 __pycache__/

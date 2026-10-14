@@ -29,7 +29,7 @@ class Combat:
     def calculate_enemy_damage(is_boss, player):
         base_atk = random.randint(5, 15)
         if is_boss:
-            base_atk *= 6.7
+            base_atk = round(base_atk * 6.7)
             if player.get("ukulele_active") and player.get("ukulele_charges") > 0:
                 base_atk = random.choice([base_atk, 0, 0, 0, 0, 0, 0, 0])
                 player["ukulele_charges"] -= 1
