@@ -418,8 +418,9 @@ def use_item(player, enemy):
     if "damage" in use:
         deal_damage(player, enemy, use["damage"])
     if "lull" in use:
-        enemy.lulled += use["lull"]
-        type_slow(f"{enemy.name} looks drowsy...", 0.05)
+        enemy.lulled = use["lull"]
+        enemy.miss_chance = use["miss_chance"]
+        type_slow(f"{enemy.name} is seeing stars...", 0.05)
 
     if use.get("consume", True):
         player.inventory.remove(key)
@@ -427,26 +428,29 @@ def use_item(player, enemy):
 
 
 def enemy_turn(player, enemy):
+    """The enemy attacks. Returns the damage the player took."""
     if enemy.lulled > 0:
         enemy.lulled -= 1
-        if random.random() < 7 / 8:
-            type_slow(f"{enemy.name} is lost in the music and misses!\n", 0.05)
-            return
+        if random.random() < enemy.miss_chance:
+            type_slow(f"{enemy.name} is still dazed and misses!\n", 0.05)
+            return 0
 
     damage = round(enemy.attack / player.stat("defense", enemy))
     player.hp -= damage
     type_slow(f"{enemy.name} did {damage} damage to {player.name}", 0.1)
     type_slow(f"{player.name}'s hp is {max(0, player.hp)}\n")
+    return damage
 
 
-def handle_victory(player, enemy):
+def handle_victory(player, enemy, damage_taken):
     if enemy.death:
         type_slow(f"\n{enemy.death}\n", 0.04)
-    player.attack += 2
+    attack_gain = ATTACK_GAIN["base"] + round(damage_taken * ATTACK_GAIN["per_damage_taken"])
+    player.attack += attack_gain
     player.hp = min(player.max_hp, player.hp + 10)
     player.gold += enemy.gold
     type_slow(
-        f"{enemy.name} is defeated! You gained 2 attack, restored 10 HP, and found {enemy.gold} gold.",
+        f"{enemy.name} is defeated! You took {damage_taken} damage, so you gained {attack_gain} attack. You restored 10 HP and found {enemy.gold} gold.",
         0.05,
     )
     for key in enemy.drops:
@@ -455,6 +459,7 @@ def handle_victory(player, enemy):
 
     if "boss" in enemy.tags:
         player.bosses_beaten += 1
+        player.current_boss = None
     if "final" in enemy.tags:
         win_game(player)
 
@@ -465,20 +470,27 @@ def win_game(player):
         sys.exit()
 
 
-def spawn_enemy(player, enemy_names):
-    """Summon the next boss if it's ready, otherwise a random regular enemy."""
-    if player.boss_ready():
-        enemy = Enemy.boss(player.next_boss())
+def spawn_enemy(player, room_name):
+    """Summon the next boss if it's ready, otherwise a regular enemy from this area."""
+    if player.current_boss:
+        enemy = player.current_boss
+        type_slow(f"\n{enemy.name} is back, with {enemy.hp} HP left!", 0.05)
+    elif player.boss_ready():
+        boss_scale = 1 + (player.scale() - 1) * SCALING["boss_share"]
+        enemy = player.current_boss = Enemy.boss(player.next_boss(), boss_scale)
         type_slow(f"\n{enemy.intro}\n", 0.04)
-        type_slow(f"{enemy.title} appears!", 0.05)
+        type_slow(f"{enemy.title} appears! ({enemy.hp} HP, {enemy.attack} attack)", 0.05)
     else:
-        enemy = Enemy.regular(random.choice(enemy_names), player.enemy_scale())
+        room = ROOMS[room_name]
+        enemy = Enemy.regular(random.choice(room["enemies"]), player.scale() * room["strength"])
+        enemy.gold = round(enemy.gold * room["strength"])
         type_slow(f"A vicious {enemy.name} appears! ({enemy.hp} HP, {enemy.attack} attack)", 0.05)
     return enemy
 
 
 def fight(player, enemy):
     type_slow(f"\n--- Start of Fight: {player.name} vs {enemy.name} ---", 0.05)
+    damage_taken = 0  # Decides how much attack you gain if you win
 
     while player.hp > 0 and enemy.hp > 0:
         player_attack_choice = (
@@ -513,21 +525,40 @@ def fight(player, enemy):
 
         # Check for Victory
         if enemy.hp <= 0:
-            handle_victory(player, enemy)
+            handle_victory(player, enemy, damage_taken)
             return
 
         if action_performed:
-            enemy_turn(player, enemy)
+            damage_taken += enemy_turn(player, enemy)
 
         # Check for Defeat (Must happen after the enemy attacks)
         if player.hp <= 0:
-            type_slow(f"{player.name}'s hp is 0! \n----- KO -----\n", 0.2)
-            sys.exit()
+            respawn(player)
+            return
+
+
+def respawn(player):
+    gold_lost = round(player.gold * DEATH_PENALTY["gold_lost"])
+    player.gold -= gold_lost
+    player.hp = max(1, round(player.max_hp * DEATH_PENALTY["hp_left"]))
+    player.location = "village"
+    boss = player.current_boss
+    if boss:  # It gets to recover too
+        boss.hp = boss.max_hp
+        boss.lulled = 0
+    type_slow("\nEverything goes dark...\n", 0.1)
+    type_slow(
+        f"{player.name} wakes up back in the village with {player.hp}/{player.max_hp} HP. "
+        f"Someone helped themselves to {gold_lost} of your gold while you were out.",
+        0.05,
+    )
+    if boss:
+        type_slow(f"{boss.name} has also recovered, back to {boss.hp} HP.", 0.05)
 
 
 # === Exploring ===
 def choose_room():
-    areas = ", ".join(f"{name} ({room['type']})" for name, room in ROOMS.items())
+    areas = ", ".join(f"{name} ({room['type']}, enemies x{room['strength']})" for name, room in ROOMS.items())
     type_slow(f"Areas: {areas}", 0.02)
     while True:
         choice = input("Enter an area: ").strip().lower()
@@ -548,7 +579,9 @@ def find_item(player):
 
 
 def explore(player):
-    room = ROOMS[choose_room()]
+    player.location = choose_room()
+    room = ROOMS[player.location]
+    type_slow(f"You travel to the {player.location}.", 0.05)
 
     # Decide if something happens in the room, based on the room's odds.
     # A boss that's ready always finds you.
@@ -558,7 +591,7 @@ def explore(player):
     if found_item:
         find_item(player)
     if met_enemy:
-        fight(player, spawn_enemy(player, room["enemies"]))
+        fight(player, spawn_enemy(player, player.location))
     if not found_item and not met_enemy:
         type_slow("The area is quiet. Nothing here.", 0.05)
 
@@ -568,7 +601,7 @@ def show_status(player):
     type_slow("-" * 30)
     item_names = [ITEMS[key]["name"] for key in player.inventory]
     type_slow(
-        f"Your health: {player.hp}/{player.max_hp} \nYour attack: {player.attack} \nYour defense: {player.defense} \nYour items: {item_names} \nYour gold: {player.gold} \nDamage dealt: {player.damage_dealt} \nEnemy strength: x{player.enemy_scale()}",
+        f"Location: {player.location} ({ROOMS[player.location]['type']}) \nYour health: {player.hp}/{player.max_hp} \nYour attack: {player.attack} \nYour defense: {player.defense} \nYour items: {item_names} \nYour gold: {player.gold} \nDamage dealt: {player.damage_dealt} \nWorld strength: x{player.scale()} (enemies, plus your base HP and attack)",
         0.02,
     )
 
@@ -577,6 +610,34 @@ def show_status(player):
         type_slow(f"⚠ {boss['name']} is hunting you! Your next fight will be against it.", 0.02)
     elif boss:
         type_slow(f"{boss['name']} appears at {boss['appears_at']} damage dealt.", 0.02)
+    else:
+        type_slow(f"Every boss is defeated. You've won! Enemies keep coming, up to x{SCALING['max']} strength.", 0.02)
+
+
+def rest_time(player):
+    """Seconds it takes to rest back to full HP."""
+    return round((player.max_hp - player.hp) / REST_HP_PER_SECOND, 1)
+
+
+def rest(player):
+    healed = player.max_hp - player.hp
+    if healed <= 0:
+        type_slow("You're already at full health.", 0.05)
+        return
+
+    seconds = rest_time(player)
+    print(f"Resting for {seconds} seconds...")
+
+    # Count HP up live, in steps of about 0.1 seconds, for the advertised time
+    start_hp = player.hp
+    steps = max(1, round(seconds * 10))
+    for step in range(1, steps + 1):
+        time.sleep(seconds / steps)
+        player.hp = start_hp + round(healed * step / steps)
+        sys.stdout.write(f"\rHP: {player.hp}/{player.max_hp}")
+        sys.stdout.flush()
+    print()
+    type_slow(f"{player.name} has rested and healed {healed} HP!", 0.02)
 
 
 def main():
@@ -584,14 +645,16 @@ def main():
     while True:
         show_status(player)
 
+        healing = player.max_hp - player.hp
+        rest_option = f"heals {healing} HP, takes {rest_time(player)}s" if healing else "already at full health"
         player_choice = (
-            input("\nYour options are: \n[F]ight \n[E]xplore \n[S]hop \n[R]est \n[Q]uit \n")
+            input(f"\nYour options are: \n[F]ight (look for trouble in the {player.location}) \n[E]xplore (travel to an area) \n[S]hop \n[R]est ({rest_option}) \n[Q]uit \n")
             .lower()
             .strip()
         )
 
         if player_choice == "f":
-            fight(player, spawn_enemy(player, list(ENEMY_TEMPLATES)))
+            fight(player, spawn_enemy(player, player.location))
 
         elif player_choice == "e":
             explore(player)
@@ -600,11 +663,7 @@ def main():
             shop(player)
 
         elif player_choice == "r":
-            type_slow("Resting... \nResting...\nResting... \n\n", 0.35)
-            type_slow(
-                f"{player.name} has rested! \nYour HP is now at {player.max_hp}!", 0.05
-            )
-            player.hp = player.max_hp
+            rest(player)
         elif player_choice == "q":
             quit_choice = input("Do you wish to quit the game (y/n)?").lower().strip()
             if quit_choice == "y":
