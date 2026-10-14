@@ -24,7 +24,8 @@ def type_slow(text, delay=0.02):
 #       A brand new stat only needs a default value in Player.__init__.
 #   "use": makes the item usable from the inventory during a fight.
 #       {"heal": HP restored, "damage": damage to the enemy,
-#        "lull": the enemy's next N attacks each have a 7 in 8 chance to miss,
+#        "lull": the enemy's next N attacks may miss, each with "miss_chance"
+#            (using another one resets the count instead of adding to it),
 #        "vs": [enemy names or tags] the item only works against,
 #        "consume": removed after use (default True)}
 ITEMS = {
@@ -58,7 +59,7 @@ ITEMS = {
     },
     "quality_control": {
         "name": "Quality Control",
-        "effect_description": "Calls the patent office on any cheap ripoffs. Deals 100 damage to a bootleg boss (single use).",
+        "effect_description": "Calls the patent office on any cheap ripoffs (single use).",
         "cost": 150,
         "use": {"damage": 100, "vs": ["ripoff"], "consume": True},
     },
@@ -82,9 +83,9 @@ ITEMS = {
     },
     "ukulele": {
         "name": "Ukulele",
-        "effect_description": "Lulls an enemy: its next 2 attacks each have a 7 in 8 chance to miss (single use).",
+        "effect_description": "You break it over an enemy's head; its next 2 attacks each have a 1 in 2 chance to miss (single use).",
         "cost": 80,
-        "use": {"lull": 2, "consume": True},
+        "use": {"lull": 2, "miss_chance": 0.5, "consume": True},
     },
     # Boss drops (not sold in the shop)
     "godzilla_scale": {
@@ -120,14 +121,27 @@ FIND_POOL = {"gold": 5, "potion": 3, "sword": 1, "shield": 1}
 
 # Name -> HP, attack range (rolled when the enemy appears), gold reward
 ENEMY_TEMPLATES = {
-    "Gremlin": {"hp": 30, "attack": (3, 5), "gold": 25},
-    "Goblin": {"hp": 75, "attack": (6, 6), "gold": 50},
-    "Orc": {"hp": 90, "attack": (5, 8), "gold": 75},
+    "Gremlin": {"hp": 30, "attack": (8, 20), "gold": 25},
+    "Goblin": {"hp": 75, "attack": (25, 35), "gold": 50},
+    "Orc": {"hp": 90, "attack": (30, 50), "gold": 75},
 }
 
-# Regular enemies get stronger as you progress: their HP, attack and gold are
-# multiplied by 1 + (damage dealt x per_damage) + (bosses beaten x per_boss).
-ENEMY_SCALING = {"per_damage": 0.001, "per_boss": 0.75}
+# The world gets stronger as you progress. Enemies' HP and attack (not their
+# gold), and your own base HP and attack, are multiplied by the world strength:
+# 1 + (damage dealt x per_damage) + (bosses beaten x per_boss), up to max.
+# Bosses get boss_share of the increase when they first appear (0 = never scale).
+SCALING = {"per_damage": 0.001, "per_boss": 0.75, "max": 5, "boss_share": 0.25}
+
+# Attack gained for winning a fight: base + (damage taken during that fight x
+# per_damage_taken), so harder fights make you stronger.
+ATTACK_GAIN = {"base": 1, "per_damage_taken": 0.1}
+
+# Resting heals you fully, at this many HP per real second
+REST_HP_PER_SECOND = 40
+
+# When you fall in battle you wake up in the village, losing this share of your
+# gold and with this share of your max HP. You keep everything else.
+DEATH_PENALTY = {"gold_lost": 0.5, "hp_left": 0.25}
 
 # Bosses appear in this order, each once the player's total damage dealt to
 # enemies reaches "appears_at". Beating the boss tagged "final" wins the game.
@@ -137,8 +151,8 @@ BOSSES = [
     {
         "name": "Demigodzilla",
         "title": "Our Holy Lord and Savior, Demigodzilla, TEMU Godzilla from The Halls of the Mountain King!",
-        "hp": 250,
-        "attack": (30, 55),
+        "hp": 215,
+        "attack": (40, 70),
         "gold": 250,
         "tags": ("boss", "ripoff"),
         "appears_at": 400,
@@ -151,8 +165,8 @@ BOSSES = [
     {
         "name": "Tharnoth",
         "title": "Tharnoth the Inevitable, Bootleg Thanos from Bilbo Baggins's pantry!",
-        "hp": 375,
-        "attack": (40, 75),
+        "hp": 470,
+        "attack": (80, 125),
         "gold": 500,
         "tags": ("boss", "ripoff", "tharnoth", "final"),
         "appears_at": 1000,
@@ -165,11 +179,13 @@ BOSSES = [
     },
 ]
 
+# Areas you can travel to. "strength" multiplies the HP, attack and gold of the
+# regular enemies found there, on top of the world strength.
 ROOMS = {
-    "village": {"type": "safe", "chance_of_enemy": 0.1, "chance_of_item": 0.7, "enemies": ["Gremlin"]},
-    "forest": {"type": "wild", "chance_of_enemy": 0.5, "chance_of_item": 0.875, "enemies": ["Gremlin", "Goblin"]},
-    "cave": {"type": "dangerous", "chance_of_enemy": 0.8, "chance_of_item": 0.4, "enemies": ["Goblin", "Orc"]},
-    "castle": {"type": "fatal", "chance_of_enemy": 1, "chance_of_item": 0.1, "enemies": ["Orc"]},
+    "village": {"type": "safe", "strength": 0.5, "chance_of_enemy": 0.1, "chance_of_item": 0.7, "enemies": ["Gremlin"]},
+    "forest": {"type": "wild", "strength": 0.8, "chance_of_enemy": 0.5, "chance_of_item": 0.875, "enemies": ["Gremlin", "Goblin"]},
+    "cave": {"type": "dangerous", "strength": 1.0, "chance_of_enemy": 0.8, "chance_of_item": 0.4, "enemies": ["Goblin", "Orc"]},
+    "castle": {"type": "fatal", "strength": 1.3, "chance_of_enemy": 1, "chance_of_item": 0.1, "enemies": ["Orc"]},
 }
 
 
